@@ -1,11 +1,11 @@
-use std::{collections::HashMap, io, usize};
+use std::{collections::HashMap, io};
 
 use tokio::net::TcpListener;
 mod http;
 use http::*;
 
 async fn handler(socket: tokio::net::TcpStream) -> Result<(), Error> {
-    let connection = Connection::new(socket).await?;
+    let mut connection = Connection::new(socket).await?;
     println!(
         "method: {:?}\nuri: {:?}\nversion: {:?}\nheaders:{:?}\n",
         connection.request.method,
@@ -13,6 +13,16 @@ async fn handler(socket: tokio::net::TcpStream) -> Result<(), Error> {
         connection.request.version,
         connection.request.headers,
     );
+    let mut resp_headers: HashMap<String, String> = HashMap::new();
+    // resp_headers.insert("Content-Length".to_string(), "0".to_string());
+
+    connection
+        .respond(Response {
+            status: StatusCode::ok(),
+            headers: resp_headers,
+            body: &String::from("hello rust server"),
+        })
+        .await?;
     Ok(())
 }
 

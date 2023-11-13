@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Debug)]
 pub enum Method {
@@ -26,19 +26,6 @@ impl From<&str> for Method {
     }
 }
 
-// impl From<&str> for Method {
-//     fn from(s: &str) -> Self {
-//         println!("ini method -> {}", s);
-//         if s == "GET" {
-//             Method::GET
-//         } else if s == "POST" {
-//             Method::POST
-//         } else {
-//             Method::GET
-//         }
-//     }
-// }
-
 pub type RequestParseResult = Result<Request, Error>;
 
 pub enum Error {
@@ -63,14 +50,20 @@ impl From<std::string::FromUtf8Error> for Error {
 
 pub enum Version {
     HTTP1_1,
-    HTTP2,
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Version::HTTP1_1 => f.write_str("HTTP/1.1"),
+        }
+    }
 }
 
 impl From<&str> for Version {
     fn from(s: &str) -> Self {
         match s {
             "HTTP/1.1" => Version::HTTP1_1,
-            "HTTP/2" => Version::HTTP2,
             _ => panic!("Unsupported HTTP version: {}", s),
         }
     }
@@ -120,7 +113,13 @@ impl Request {
 
                     let value = match iter.next() {
                         // lebih aman menggunakan fitur match pattern
-                        Some(k) => k,
+                        Some(v) => {
+                            if v.chars().nth(0) == Some(' ') {
+                                String::from(v)[1..].to_string()
+                            } else {
+                                v.to_string()
+                            }
+                        }
                         None => return Err(Error::ParsingError),
                     };
 
@@ -155,6 +154,7 @@ impl Request {
 
                     let value = match iter.next() {
                         Some(k) => k,
+
                         None => return Err(Error::ParsingError),
                     };
 
@@ -175,7 +175,25 @@ impl Request {
     }
 }
 
-pub struct Response {}
+pub struct StatusCode {
+    pub status_code: usize,
+    pub msg: &'static str,
+}
+impl StatusCode {
+    pub fn ok() -> Self {
+        StatusCode {
+            status_code: 200,
+            msg: "OK",
+        }
+    }
+}
+
+// response membutuhkan lifetime
+pub struct Response<'a> {
+    pub status: StatusCode,
+    pub headers: HashMap<String, String>,
+    pub body: &'a str,
+}
 
 pub struct Connection {
     pub request: Request,
@@ -189,7 +207,38 @@ impl Connection {
         Ok(Connection { request, socket })
     }
 
-    pub async fn respond(&self, status: usize, body: &str) -> Result<(), Error> {
+    // implementasi function yang menerapkan lifetime
+    pub async fn respond<'a>(&mut self, resp: Response<'a>) -> Result<(), std::io::Error> {
+        self.socket
+            .write_all(
+                format!(
+                    "{} {} {}\r\n",
+                    self.request.version, resp.status.status_code, resp.status.msg
+                )
+                .as_bytes(),
+            )
+            .await?;
+
+        println!(
+            "{} {} {}\r\n",
+            self.request.version, resp.status.status_code, resp.status.msg
+        );
+
+        // read header content
+
+        for (k, v) in resp.headers.iter() {
+            self.socket
+                .write_all(format!("{}: {}\r\n", k, v).as_bytes())
+                .await?;
+            print!("{}: {}\r\n", k, v);
+        }
+
+        print!("\r\n");
+
+        self.socket.write_all(b"\r\n").await?;
+        if resp.body.len() != 0 {
+            self.socket.write_all(resp.body.as_bytes()).await?;
+        }
         Ok(())
     }
 }
