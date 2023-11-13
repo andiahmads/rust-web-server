@@ -114,6 +114,9 @@ impl Request {
                     let value = match iter.next() {
                         // lebih aman menggunakan fitur match pattern
                         Some(v) => {
+                            // Jika karakter pertama adalah spasi,
+                            // maka kode String::from(v)[1..].to_string() membuat String baru yang dimulai dari karakter kedua hingga akhir string ([1..]).
+                            // Ini dilakukan untuk memotong spasi pertama dari string.
                             if v.chars().nth(0) == Some(' ') {
                                 String::from(v)[1..].to_string()
                             } else {
