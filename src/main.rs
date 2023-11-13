@@ -1,16 +1,14 @@
-use std::{collections::HashMap, io};
+use std::{collections::HashMap, io, usize};
 
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
-};
+use tokio::{io::AsyncReadExt, net::TcpListener};
 
+#[derive(Debug)]
 enum Method {
     GET,
     POST,
     PUT,
     PATCH,
-    OPTION,
+    OPTIONS,
     DELETE,
 }
 
@@ -21,15 +19,17 @@ impl From<&str> for Method {
             "POST" => Method::POST,
             "PUT" => Method::PUT,
             "PATCH" => Method::PATCH,
-            "OPTION" => Method::OPTION,
+            "OPTIONS" => Method::OPTIONS,
             "DELETE" => Method::DELETE,
             _ => panic!("Unsupported HTTP method: {}", s),
+            // _ => unreachable!(),
         }
     }
 }
 
 // impl From<&str> for Method {
 //     fn from(s: &str) -> Self {
+//         println!("ini method -> {}", s);
 //         if s == "GET" {
 //             Method::GET
 //         } else if s == "POST" {
@@ -60,6 +60,7 @@ impl From<std::string::FromUtf8Error> for Error {
     }
 }
 
+#[derive(Debug)]
 enum Version {
     HTTP1_1,
     HTTP2,
@@ -82,11 +83,10 @@ struct Request {
     headers: HashMap<String, String>,
     query_params: HashMap<String, String>,
     path_params: HashMap<String, String>,
-    reader: tokio::net::TcpStream,
 }
 
 impl Request {
-    pub async fn new(mut reader: tokio::net::TcpStream) -> RequestParseResult {
+    pub async fn new(reader: &mut tokio::net::TcpStream) -> RequestParseResult {
         let mut first_line: String = String::new();
 
         let mut headers: HashMap<String, String> = HashMap::new();
@@ -99,14 +99,16 @@ impl Request {
             if b as char == '\n' {
                 if first_line.is_empty() {
                     // membaca line pertama pada buffer content
-                    first_line = String::from_utf8(buffer.clone())?;
+                    first_line = String::from_utf8(buffer[0..buffer.len() - 2].to_vec())?;
                     buffer.clear();
                 } else {
                     if buffer.len() == 2 && buffer[0] as char == '\r' {
                         break;
                     }
                     // asumsinya semua yang berada pada block ini adalah header
-                    let header_line = String::from_utf8(buffer.clone())?;
+                    let header_line = String::from_utf8(buffer[0..buffer.len() - 2].to_vec())?;
+
+                    buffer.clear();
                     let mut iter = header_line.split(":");
                     // iter.next().unwrap(); // unwrap bisa membuat program panic
 
@@ -128,19 +130,17 @@ impl Request {
             }
         }
         let mut first_line_iter = first_line.split(" ");
+
+        let method: Method = first_line_iter.next().unwrap().into();
+
         let uri_iter_next_unwrap = first_line_iter.next().unwrap().to_string();
+
         let mut uri_iter = uri_iter_next_unwrap.split("?");
 
         let uri = match uri_iter.next() {
             Some(u) => u,
             None => return Err(Error::ParsingError),
         }; // -> params?ucok=subara
-
-        // kondisi url tanpa params
-        let uri = match uri_iter.next() {
-            Some(u) => u,
-            None => return Err(Error::ParsingError),
-        };
 
         // kondisi url dengan params
         let mut query_params: HashMap<String, String> = HashMap::new();
@@ -165,25 +165,51 @@ impl Request {
         }
 
         Ok(Request {
-            method: first_line_iter.next().unwrap().into(),
+            method,
             uri: uri.to_string(),
             version: first_line_iter.next().unwrap().into(),
-            headers: headers,
-            query_params: query_params,
-            reader: reader,
+            headers,
+            query_params,
             path_params: HashMap::new(),
         })
     }
 }
 
-async fn handler(mut socket: tokio::net::TcpStream) -> io::Result<()> {
-    socket.write_all(b"rust web server").await?; // b itu menandakan string byte
+struct Response {}
+
+struct Connection {
+    request: Request,
+    socket: tokio::net::TcpStream,
+}
+
+impl Connection {
+    pub async fn new(mut socket: tokio::net::TcpStream) -> Result<Connection, Error> {
+        let request = Request::new(&mut socket).await?;
+        // let response = Response {};
+        Ok(Connection { request, socket })
+    }
+
+    pub async fn respond(&self, status: usize, body: &str) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+async fn handler(socket: tokio::net::TcpStream) -> Result<(), Error> {
+    let connection = Connection::new(socket).await?;
+    println!(
+        "method: {:?}\nuri: {:?}\nversion: {:?}\nheaders:{:?}\n",
+        connection.request.method,
+        connection.request.uri,
+        connection.request.version,
+        connection.request.headers,
+    );
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:8383").await?;
+    println!("server running on port 8383");
 
     loop {
         let (socket, _) = listener.accept().await?;
